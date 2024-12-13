@@ -162,7 +162,7 @@ def snippy(sample):
 			f"snippy --outdir {out_dir} "
 			f"--R1 {config['trimmed']}/{sample.name}.R1.trimmed.fastq.gz "
 			f"--R2 {config['trimmed']}/{sample.name}.R2.trimmed.fastq.gz "
-			f"--cpus {config['threads']} "
+			f"--cpus {config['minithreads']} "
 			f"--tmpdir {tmp_dir} "
 			f"--reference {config['references']}/{sample.reference_name}.gbk --force > {logfile} 2> {errfile}"
 		)
