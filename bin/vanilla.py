@@ -1,18 +1,5 @@
 #!/usr/bin/python3
 
-#Files needed: config.yaml, samples.tsv, nr.dmnd
-#Samples.tsv: Sample	Suffix	Reference (e.g. 107-E1	S71	Aci107 for 107-E1_S71)
-#config.yaml e.g.:
-##threads: 6
-##minithreads: 10
-##samples: samples.tsv
-##fastq: Fastq
-##references: Reference
-##results: Results
-##database: nr
-
-
-
 
 import os
 import logging
@@ -121,7 +108,7 @@ def merge_lanes(sample, config, lanes=4):
 	except Exception as e:
 		error(f"Error merging lanes for {sample}: {e}")
 
-def cutadapt(sample, config):
+def cutadapt(sample):
 	"""Trim reads using Cutadapt."""
 	trimmed_r1 = f"{config['trimmed']}/{sample}.R1.trimmed.fastq.gz"
 	trimmed_r2 = f"{config['trimmed']}/{sample}.R2.trimmed.fastq.gz"
@@ -157,7 +144,7 @@ def convert_orf_ids(fname,reference):
 	with open(fname, "w") as g:
 		g.writelines(updated_records)
 
-def snippy(sample, config):
+def snippy(sample):
 	"""Run Snippy for variant calling."""
 	try:
 		tmp_dir = os.path.join(config['snippy'],f"{sample.name}_snippy_tmp")
@@ -183,6 +170,11 @@ def snippy(sample, config):
 	except Exception as e:
 		error(f"Error running Snippy for {sample.name}: {e}")
 
+
+def annotate_snippy_result(sample):
+	snippy_out = os.path.join(config['snippy'],f"{sample.name}_snippy_out", "snps.csv")
+	annotated = os.path.join(config["results"], f"{sample.name}.variants.tsv")
+	ref_table = self.re
 
 class Sample:
 	def __init__(self, sample, reference_name, reference_file):
@@ -216,14 +208,14 @@ def read_samples(file_path):
 	
 	return samples
 
-def process_sample(sample, config):
+def process_sample(sample):
 	"""Process a single sample through the workflow."""
 	try:
 		# 1. Trim raw reads
-		cutadapt(sample.name, config)
+		cutadapt(sample.name)
 
 		# 2. Find nucleotide variants
-		snippy(sample, config)
+		snippy(sample)
 
 		# 3. Identify amino acid variants (custom logic can be added here)
 		#TODO
@@ -241,15 +233,17 @@ def predict_orf(base_file, fa, refname, param):
 
 def gunzip_if_necessary(infile, outfile):
 	if os.path.isfile(outfile):
-		return
+		return outfile
 	if infile.endswith(".gz"):
 		sysexec(f"gunzip -c {infile} > {outfile}")
 		return outfile
 	return infile
 
-def create_genbank(nt_file, faa_file, gbk_file, reference):
+def create_genbank(nt_file, faa_file, diamond_output, gbk_file, reference):
 	if os.path.isfile(gbk_file):
 		return
+	df = pd.read_csv(diamond_output, sep="\t", comment='#', header=None)
+	products = {row[0]: row[5] for _,row in df.iterrows()}
 	msg(f"Reading {nt_file} and {faa_file}")
 	fa_nt = SeqIO.index(nt_file,"fasta")
 	fa_aa = SeqIO.parse(faa_file,"fasta")
@@ -276,6 +270,8 @@ def create_genbank(nt_file, faa_file, gbk_file, reference):
 			ft = Record.Feature("CDS",location)
 			ft.qualifiers.append(Record.Qualifier("/gene=",f'"{orf[0]}"'))
 			ft.qualifiers.append(Record.Qualifier("/translation=",f'"{orf[1]}"'))
+			if orf[0] in products:
+				ft.qualifiers.append(Record.Qualifier("/product=",f'"{products[orf[0]]}"'))
 			genbank_rcd.features.append(ft)
 		genbank_records.append(genbank_rcd)
 	
@@ -285,7 +281,7 @@ def create_genbank(nt_file, faa_file, gbk_file, reference):
 	msg(f"Ready with {gbk_file}")
 
 
-def annotate_orfs_with_diamond(fa, diamond_output, config):
+def annotate_orfs_with_diamond(fa, diamond_output):
 	if os.path.isfile(diamond_output):
 		return
 	sysexec(f"diamond blastp --max-target-seqs 1 --db {config['database']} --threads {config['minithreads']} --out {diamond_output} --outfmt 6 qseqid sseqid qlen slen stitle qstart qend sstart send evalue bitscore length pident qcovhsp scovhsp full_qseq full_sseq --header --query {fa}")
@@ -316,7 +312,7 @@ def create_annotated_bed(orf_fna, diamond_output, outbed):
 			g.write("\t".join(bed[orfid]) +"\t{}\n".format(annotation[orfid]))
 	
 
-def predict_and_annotate_orf(reference, config):
+def predict_and_annotate_orf(reference):
 	"""Predict ORFs, create GenBank files, and annotate ORFs for a reference genome."""
 	refname, reffile = reference
 	msg(f"Annotating {refname}")
@@ -331,9 +327,9 @@ def predict_and_annotate_orf(reference, config):
 	for fa, param in [(outfaa, 1,), (outfna, 3,)]:
 		predict_orf(base_file, fa, refname, param)
 	
-	create_genbank(base_file, outfaa, outgbk, refname)
-	annotate_orfs_with_diamond(outfaa, diamond_output, config)
+	annotate_orfs_with_diamond(outfaa, diamond_output)
 	create_annotated_bed(outfna, diamond_output, outbed)
+	create_genbank(base_file, outfaa, diamond_output, outgbk, refname)
 	
 	msg(f"Completed annotation for {refname}")
 
@@ -341,6 +337,7 @@ def predict_and_annotate_orf(reference, config):
 
 
 def main():
+	global config
 	# Parse arguments
 	args = read_args()
 
@@ -355,16 +352,18 @@ def main():
 	mkdir_force(config["snippy"])
 
 	# Read and process samples
-	samples = read_samples(pargs.s)
+	samples = read_samples(args.s)
 
 	# Process references
 	references = set((sample.reference_name, sample.reference_file,) for sample in samples)
 	msg(f"Processing {len(references)} unique references.")
+	for rewf in references:
+		predict_and_annotate_orf(rewf)
 	with mp.Pool(config['threads']) as pool:
-		pool.starmap(predict_and_annotate_orf, [(ref, config) for ref in references])
+		pool.map(predict_and_annotate_orf, references)
 		
 	with mp.Pool(config['threads']) as pool:
-		pool.starmap(process_sample, [(sample, config) for sample in samples])
+		pool.map(process_sample, samples)
 
 	# Finalize results
 	msg("Pipeline completed successfully.")

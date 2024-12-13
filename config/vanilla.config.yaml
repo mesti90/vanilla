@@ -9,4 +9,4 @@ references: Intermediate_files/References_for_variants
 trimmed: Intermediate_files/Trimmed
 snippy: Intermediate_files/Snippy
 variants_with_best_orf: Variant_results/variants_with_best_orf.tsv
-minithreads: 40
+minithreads: 1
