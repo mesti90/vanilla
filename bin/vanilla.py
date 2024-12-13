@@ -1,7 +1,5 @@
 #!/usr/bin/python3
 
-#TODO: database??
-
 #Files needed: config.yaml, samples.tsv, nr.dmnd
 #Samples.tsv: Sample	Suffix	Reference (e.g. 107-E1	S71	Aci107 for 107-E1_S71)
 #config.yaml e.g.:
@@ -161,8 +159,14 @@ def convert_orf_ids(fname,reference):
 def snippy(sample, config):
 	"""Run Snippy for variant calling."""
 	try:
-		tmp_dir = f"{config['snippy']}/{sample.name}_snippy_tmp"
-		out_dir = f"{config['snippy']}/{sample.name}_snippy_out"
+		tmp_dir = os.path.join(config['snippy'],f"{sample.name}_snippy_tmp")
+		out_dir = os.path.join(config['snippy'],f"{sample.name}_snippy_out")
+		outfile = os.path.join(out_dir, "snps.csv")
+		logfile = os.path.join(tmp_dir, "snippy.log")
+		errfile = os.path.join(tmp_dir, "snippy.err")
+		if os.path.isfile(outfile):
+			msg(f"{sample.name}: snippy is skipped, as {outfile} already exists")
+			return
 		mkdir_force(tmp_dir)
 		mkdir_force(out_dir)
 
@@ -172,9 +176,9 @@ def snippy(sample, config):
 			f"--R2 {config['trimmed']}/{sample.name}.R2.trimmed.fastq.gz "
 			f"--cpus {config['threads']} "
 			f"--tmpdir {tmp_dir} "
-			f"--reference {config['references']}/{sample.reference_name}.gbk --force"
+			f"--reference {config['references']}/{sample.reference_name}.gbk --force > {logfile} 2> {errfile}"
 		)
-		msg(f"Snippy analysis completed for {sample.name}.")
+		msg(f"Snippy analysis completed for {sample.name}. Results: {outfile}")
 	except Exception as e:
 		error(f"Error running Snippy for {sample.name}: {e}")
 
@@ -361,11 +365,11 @@ def main():
 	#	pool.starmap(predict_and_annotate_orf, [(ref, config) for ref in references])
 		
 	# Process each sample
-	for sample in samples:
-		process_sample(sample, config)
-		exit()
-	#with mp.Pool(config['threads']) as pool:
-	#	pool.starmap(process_sample, [(sample, config) for sample in samples])
+	#for sample in samples:
+	#	process_sample(sample, config)
+	#	exit()
+	with mp.Pool(config['threads']) as pool:
+		pool.starmap(process_sample, [(sample, config) for sample in samples])
 
 	# Finalize results
 	msg("Pipeline completed successfully.")
