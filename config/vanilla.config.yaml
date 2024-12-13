@@ -1,0 +1,13 @@
+database: Databases/nr.dmnd
+fastq: Raw_reads
+force: false
+project: sample_variants_20241125
+results: Variant_results
+samples: config/samples_variant_analysis_20241125.tsv
+threads: 40
+variants: Variant_results/variants.tsv
+references: Intermediate_files/References_for_variants
+trimmed: Intermediate_files/Trimmed
+snippy: Intermediate_files/Snippy
+variants_with_best_orf: Variant_results/variants_with_best_orf.tsv
+minithreads: 40
