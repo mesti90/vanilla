@@ -33,6 +33,7 @@ from Bio.GenBank import Record
 def read_args():
 	parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 	parser.add_argument("-c", help="Config file", default="config/vanilla.config.yaml")
+	parser.add_argument("-s", help="Samples", default="config/vanilla.samples.tsv")
 	return parser.parse_args()
 
 def init_logging(log_file):
@@ -354,7 +355,7 @@ def main():
 	mkdir_force(config["snippy"])
 
 	# Read and process samples
-	samples = read_samples(config['samples'])
+	samples = read_samples(pargs.s)
 
 	# Process references
 	references = set((sample.reference_name, sample.reference_file,) for sample in samples)
