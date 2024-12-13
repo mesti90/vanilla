@@ -359,15 +359,9 @@ def main():
 	# Process references
 	references = set((sample.reference_name, sample.reference_file,) for sample in samples)
 	msg(f"Processing {len(references)} unique references.")
-	for ref in references:
-		predict_and_annotate_orf(ref, config)
-	#with mp.Pool(config['threads']) as pool:
-	#	pool.starmap(predict_and_annotate_orf, [(ref, config) for ref in references])
+	with mp.Pool(config['threads']) as pool:
+		pool.starmap(predict_and_annotate_orf, [(ref, config) for ref in references])
 		
-	# Process each sample
-	#for sample in samples:
-	#	process_sample(sample, config)
-	#	exit()
 	with mp.Pool(config['threads']) as pool:
 		pool.starmap(process_sample, [(sample, config) for sample in samples])
 
