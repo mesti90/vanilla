@@ -3,7 +3,6 @@ fastq: Raw_reads
 force: false
 project: sample_variants_20241125
 results: Variant_results
-samples: config/samples_variant_analysis_20241125.tsv
 threads: 40
 variants: Variant_results/variants.tsv
 references: Intermediate_files/References_for_variants
