@@ -13,7 +13,7 @@ default-jdk-headless parallel libvcflib-dev libvcflib-tools
 
 #Install Snippy
 FROM builder AS snippy
-	RUN git clone https://github.com/tseemann/snippy.git
+	RUN git clone https://github.com/tseemann/snippy.git && sed -i '298a print $cfg "codon.Bacterial_and_Plant_Plastid: TTT/F, TTC/F, TTA/L, TTG/L+, TCT/S, TCC/S, TCA/S, TCG/S, TAT/Y, TAC/Y, TAA/*, TAG/*, TGT/C, TGC/C, TGA/*, TGG/W, CTT/L, CTC/L, CTA/L, CTG/L+, CCT/P, CCC/P, CCA/P, CCG/P, CAT/H, CAC/H, CAA/Q, CAG/Q, CGT/R, CGC/R, CGA/R, CGG/R, ATT/I+, ATC/I+, ATA/I+, ATG/M+, ACT/T, ACC/T, ACA/T, ACG/T, AAT/N, AAC/N, AAA/K, AAG/K, AGT/S, AGC/S, AGA/R, AGG/R, GTT/V, GTC/V, GTA/V, GTG/V+, GCT/A, GCC/A, GCA/A, GCG/A, GAT/D, GAC/D, GAA/E, GAG/E, GGT/G, GGC/G, GGA/G, GGG/G\\n";' snippy/bin/snippy
 
 #Install SnpEff
 FROM builder AS snpeff
@@ -45,8 +45,8 @@ FROM builder AS final
 	
 	#Install additional dependencies
 	
-	RUN apt-get -y --no-install-recommends install bison flex bioperl hmmer emboss python3-biopython python3-yaml freebayes samtools bamtools bedtools bcftools any2fasta samclip snp-sites seqtk && apt-get clean && apt-get autoclean && rm -rf /var/lib/apt/lists/* 
- 
+	RUN apt-get -y --no-install-recommends install bison flex bioperl hmmer emboss python3-biopython python3-yaml freebayes samtools bamtools bedtools bcftools any2fasta samclip snp-sites seqtk mc && apt-get clean && apt-get autoclean && rm -rf /var/lib/apt/lists/* 
+	
 	#Copy binaries and scripts
 	
 	WORKDIR /usr/local/bin
