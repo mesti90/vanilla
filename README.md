@@ -2,4 +2,4 @@
 
 How to run?
 
-`python3 vanilla/vanilla.py -c config/vanilla.20241125.config.yaml`
+`python3 vanilla/vanilla.py -c config/vanilla.config.yaml -s config/vanilla.samples.tsv`
