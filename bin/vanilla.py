@@ -32,7 +32,7 @@ from Bio.GenBank import Record
 
 def read_args():
 	parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-	parser.add_argument("-c", help="Config file", default="config.yaml")
+	parser.add_argument("-c", help="Config file", default="config/vanilla.config.yaml")
 	return parser.parse_args()
 
 def init_logging(log_file):
