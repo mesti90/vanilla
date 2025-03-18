@@ -1,23 +1,28 @@
 #!/usr/bin/python3
 
+#TODO: check if reads are not corrupt; check if trimmed reads are not corrupt
 
-import os
-import logging
-import time
-import yaml
-import glob
-import csv
+# Standard library imports
 import argparse
+import csv
+import glob
+import logging
 import multiprocessing as mp
-from collections import defaultdict
-from Bio import SeqIO
-from Bio.Seq import Seq
+import os
 import subprocess
+import time
+from collections import defaultdict
+import shutil
+
+# Third-party imports
 import pandas as pd
-from Bio import GenBank
+import yaml
+from Bio import GenBank, SeqIO
 from Bio.GenBank import Record
+from Bio.Seq import Seq
 
 def read_args():
+	"""Parse and return command-line arguments."""
 	parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 	parser.add_argument("-c", help="Config file", default="config/vanilla.config.yaml")
 	parser.add_argument("-s", help="Samples", default="config/vanilla.samples.tsv")
@@ -32,10 +37,12 @@ def init_logging(log_file):
 	)
 
 def msg(x):
+	"""Print and log the message"""
 	print(x)
 	logging.info(x)
 
 def error(x):
+	"""Prints an error"""
 	print(f"Error: {x}")
 	logging.error(x)
 
@@ -85,35 +92,23 @@ def read_config(config_file):
 		error(f"Error reading config file {config_file}: {e}")
 		raise
 
-def merge_lanes(sample, config, lanes=4):
-	"""Merge lane files for a sample."""
-	r1_files = sorted(glob.glob(f"{config['fastq']}/{sample}_*_L*_R1_001.fastq.gz"))
-	r2_files = sorted(glob.glob(f"{config['fastq']}/{sample}_*_L*_R2_001.fastq.gz"))
-	merged_r1 = f"{config['fastq']}/{sample}.R1.fastq.gz"
-	merged_r2 = f"{config['fastq']}/{sample}.R2.fastq.gz"
+def check_gz_integrity(gz):
+	"""Check the integrity of a gzip file."""
+	if not os.path.isfile(gz):
+		logging.error(f"{gz} does not exist.")
+		return False
+	res = os.system(f"gzip -t {gz} > /dev/null 2>&1") == 0
+	msg(f"{gz} is ok" if res else f"ERROR: {gz} is corrupt")
+	return res
 
-	if len(r1_files) < lanes or len(r2_files) < lanes:
-		logging.warning(f"{sample}: Not all lanes downloaded.")
-		return
 
-	if os.path.isfile(merged_r1) and os.path.isfile(merged_r2):
-		msg(f"{sample}: Merged files already exist.")
-		return
-
-	# Merge files
-	try:
-		sysexec(f"cat {' '.join(r1_files)} > {merged_r1}")
-		sysexec(f"cat {' '.join(r2_files)} > {merged_r2}")
-		msg(f"{sample}: Merged {len(r1_files)} R1 and {len(r2_files)} R2 files.")
-	except Exception as e:
-		error(f"Error merging lanes for {sample}: {e}")
 
 def cutadapt(sample):
 	"""Trim reads using Cutadapt."""
 	trimmed_r1 = f"{config['trimmed']}/{sample}.R1.trimmed.fastq.gz"
 	trimmed_r2 = f"{config['trimmed']}/{sample}.R2.trimmed.fastq.gz"
-
-	if os.path.isfile(trimmed_r1) and os.path.isfile(trimmed_r2) and not config.get("force"):
+	
+	if not config.get("force") and os.path.isfile(trimmed_r1) and os.path.isfile(trimmed_r2):
 		msg(f"{sample}: Trimmed files already exist.")
 		return
 
@@ -150,22 +145,23 @@ def snippy(sample):
 		tmp_dir = os.path.join(config['snippy'],f"{sample.name}_snippy_tmp")
 		out_dir = os.path.join(config['snippy'],f"{sample.name}_snippy_out")
 		outfile = os.path.join(out_dir, "snps.csv")
+		resultfile = os.path.join(config['results'],f"{sample.name}.variants.csv")
 		logfile = os.path.join(tmp_dir, "snippy.log")
 		errfile = os.path.join(tmp_dir, "snippy.err")
 		if os.path.isfile(outfile):
 			msg(f"{sample.name}: snippy is skipped, as {outfile} already exists")
-			return
-		mkdir_force(tmp_dir)
-		mkdir_force(out_dir)
+		else:
+			mkdir_force(tmp_dir)
+			mkdir_force(out_dir)
 
-		sysexec(
-			f"snippy --outdir {out_dir} "
-			f"--R1 {config['trimmed']}/{sample.name}.R1.trimmed.fastq.gz "
-			f"--R2 {config['trimmed']}/{sample.name}.R2.trimmed.fastq.gz "
-			f"--cpus {config['minithreads']} "
-			f"--tmpdir {tmp_dir} "
-			f"--reference {config['references']}/{sample.reference_name}.gbk --force > {logfile} 2> {errfile}"
-		)
+			sysexec(
+				f"snippy --outdir {out_dir} "
+				f"--R1 {config['trimmed']}/{sample.name}.R1.trimmed.fastq.gz "
+				f"--R2 {config['trimmed']}/{sample.name}.R2.trimmed.fastq.gz "
+				f"--cpus {config['minithreads']} "
+				f"--tmpdir {tmp_dir} "
+				f"--reference {config['references']}/{sample.reference_name}.gbk --force > {logfile} 2> {errfile}"
+			)
 		msg(f"Snippy analysis completed for {sample.name}. Results: {outfile}")
 	except Exception as e:
 		error(f"Error running Snippy for {sample.name}: {e}")
@@ -214,11 +210,9 @@ def process_sample(sample):
 		# 1. Trim raw reads
 		cutadapt(sample.name)
 
-		# 2. Find nucleotide variants
+		# 2. Find nucleotide and amino acid variants
 		snippy(sample)
-
-		# 3. Identify amino acid variants (custom logic can be added here)
-		#TODO
+		
 		msg(f"Processing for {sample} completed.")
 	except Exception as e:
 		error(f"Error processing sample {sample}: {e}")
@@ -243,7 +237,7 @@ def create_genbank(nt_file, faa_file, diamond_output, gbk_file, reference):
 	if os.path.isfile(gbk_file):
 		return
 	df = pd.read_csv(diamond_output, sep="\t", comment='#', header=None)
-	products = {row[0]: row[5] for _,row in df.iterrows()}
+	products = {row[0]: row[4] for _,row in df.iterrows()}
 	msg(f"Reading {nt_file} and {faa_file}")
 	fa_nt = SeqIO.index(nt_file,"fasta")
 	fa_aa = SeqIO.parse(faa_file,"fasta")
@@ -333,6 +327,37 @@ def predict_and_annotate_orf(reference):
 	
 	msg(f"Completed annotation for {refname}")
 
+def concat_results(samples, concatenated_file):
+	"""Concatenate results from all samples into a single tab-separated file with a unified header.
+
+	Args:
+		samples (list): List of Sample objects.
+		concatenated_file (str): Path to the output concatenated file.
+	"""
+	header_written = False  # Flag to track if the header has been written
+
+	with open(concatenated_file, "w", newline='') as outfile:
+		tsv_writer = csv.writer(outfile, delimiter='\t')
+
+		for sample in samples:
+			out_dir = os.path.join(config['snippy'], f"{sample.name}_snippy_out")
+			outfile_path = os.path.join(out_dir, "snps.csv")
+
+			if os.path.isfile(outfile_path):
+				with open(outfile_path, "r", newline='') as infile:
+					csv_reader = csv.reader(infile)
+					for i, row in enumerate(csv_reader):
+						if i == 0:  # Handle the header row
+							if not header_written:
+								tsv_writer.writerow(["Sample"] + row)  # Write the header with "Sample" column
+								header_written = True
+						else:
+							tsv_writer.writerow([sample.name] + row)  # Write the data row with "Sample" column
+			else:
+				msg(f"Warning: File {outfile_path} does not exist for sample {sample.name}.")
+	
+	msg(f"Concatenated results saved to {concatenated_file}.")
+
 
 
 
@@ -354,17 +379,17 @@ def main():
 	# Read and process samples
 	samples = read_samples(args.s)
 
-	# Process references
+	# Predict and annotate ORFs for references
 	references = set((sample.reference_name, sample.reference_file,) for sample in samples)
 	msg(f"Processing {len(references)} unique references.")
-	for rewf in references:
-		predict_and_annotate_orf(rewf)
 	with mp.Pool(config['threads']) as pool:
 		pool.map(predict_and_annotate_orf, references)
-		
+	
+	# Parallel processing for samples
 	with mp.Pool(config['threads']) as pool:
 		pool.map(process_sample, samples)
 
+	concat_results(samples, config['variants'])
 	# Finalize results
 	msg("Pipeline completed successfully.")
 
