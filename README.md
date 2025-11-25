@@ -51,15 +51,15 @@ The pipeline requires a YAML configuration file specifying paths and parameters.
 
 ```yaml
 project: my_project
-results: results
-threads: 4
-minithreads: 2
+results: Variant_results
+threads: 40
+minithreads: 1
 fastq: data/fastq
-trimmed: data/trimmed
-references: references
-snippy: snippy_results
-database: diamond_db.dmnd
-variants: results/all_variants.tsv
+trimmed: Intermediate_files/trimmed
+references: Intermediate_files/References_for_variants
+snippy: Intermediate_files/Snippy
+database: Databases/nr.dmnd
+variants: Variant_results/all_variants.tsv
 force: false
 ```
 
@@ -78,7 +78,7 @@ sample2	ref2	references/ref2.fna
 Run the pipeline with:
 
 ```bash
-python3 pipeline.py -c config/config.yaml -s config/samples.tsv
+python3 vanilla/bin/vanilla.py -c config/config.yaml -s config/samples.tsv
 ```
 
 The pipeline will:
@@ -88,19 +88,9 @@ The pipeline will:
 3. Perform variant calling using Snippy.
 4. Aggregate all variant results into a single TSV.
 
-Logs are created automatically with timestamps.
-
 ## Output Structure
 
 - `results/` – Final results including concatenated variants.
 - `references/` – Reference ORF predictions, BED files, and GenBank files.
 - `snippy_results/` – Individual Snippy outputs per sample.
 - `data/trimmed/` – Trimmed FASTQ files.
-
-## Contributing
-
-Feel free to submit issues or pull requests for improvements, bug fixes, or new features.
-
-## License
-
-Specify your license here (e.g., MIT, GPL).
