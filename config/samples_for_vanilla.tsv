@@ -1,0 +1,19 @@
+Sample	R1	R2	contigs	Reference_name	Reference_fasta	Reference_gbk
+K382-2	raw_reads/K382-2_S132_L001_R1_001.fastq.gz	raw_reads/K382-2_S132_L001_R2_001.fastq.gz		K382	contigs/K382S1.fna	genbanks/K382.gbk
+K382-3	raw_reads/K382-3_S130_L001_R1_001.fastq.gz	raw_reads/K382-3_S130_L001_R2_001.fastq.gz		K382	contigs/K382S1.fna	genbanks/K382.gbk
+K484-1	raw_reads/K484-1_S131_L001_R1_001.fastq.gz	raw_reads/K484-1_S131_L001_R2_001.fastq.gz		K484	contigs/NNGYK_K294S1.fna	genbanks/K484.gbk
+K484-2	raw_reads/K484-2_S129_L001_R1_001.fastq.gz	raw_reads/K484-2_S129_L001_R2_001.fastq.gz		K484	contigs/NNGYK_K294S1.fna	genbanks/K484.gbk
+K494-3	raw_reads/K494-3_S127_L001_R1_001.fastq.gz	raw_reads/K494-3_S127_L001_R2_001.fastq.gz		K494	contigs/NNGYK_K338S1.fna	genbanks/K494.gbk
+K484-3	raw_reads/K484-3_S133_L001_R1_001.fastq.gz	raw_reads/K484-3_S133_L001_R2_001.fastq.gz		K484	contigs/NNGYK_K294S1.fna	genbanks/K484.gbk
+K99-3	raw_reads/K99-3_S128_L001_R1_001.fastq.gz	raw_reads/K99-3_S128_L001_R2_001.fastq.gz		K99	contigs/GCF_019927685.1.fna	genbanks/K99.gbk
+#HUKP17_e1			contigs/HUKP17_e1.fa	HUKP17	contigs/HUKP17.fa	gabor_genbanks/HUKP17.snippy_compat.gbk
+#HUKP17_e3			contigs/HUKP17_e3.fa	HUKP17	contigs/HUKP17.fa	gabor_genbanks/HUKP17.snippy_compat.gbk
+#HUKP17_e4			contigs/HUKP17_e4.fa	HUKP17	contigs/HUKP17.fa	gabor_genbanks/HUKP17.snippy_compat.gbk
+#HUKP17_e7			contigs/HUKP17_e7.fa	HUKP17	contigs/HUKP17.fa	gabor_genbanks/HUKP17.snippy_compat.gbk
+#HUKP17_e8			contigs/HUKP17_e8.fa	HUKP17	contigs/HUKP17.fa	gabor_genbanks/HUKP17.snippy_compat.gbk
+#HUKP23_e1			contigs/HUKP23_e1.fa	HUKP23	contigs/HUKP23.fa	gabor_genbanks/HUKP23.snippy_compat.gbk
+#HUKP9_e2R			contigs/HUKP9_e2R.fa	HUKP9	contigs/HUKP9.fa	gabor_genbanks/HUKP9.snippy_compat.gbk
+#HUKP17_e12			contigs/HUKP17_e12.fa	HUKP17	contigs/HUKP17.fa	gabor_genbanks/HUKP17.snippy_compat.gbk
+#HUKP17_e13			contigs/HUKP17_e13.fa	HUKP17	contigs/HUKP17.fa	gabor_genbanks/HUKP17.snippy_compat.gbk
+#HUKP29_e1			contigs/HUKP29_e1.fa	HUKP29	contigs/HUKP29.fa	gabor_genbanks/HUKP29.snippy_compat.gbk
+#HUKP29_e2			contigs/HUKP29_e2.fa	HUKP29	contigs/HUKP29.fa	gabor_genbanks/HUKP29.snippy_compat.gbk

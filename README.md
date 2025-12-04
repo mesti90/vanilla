@@ -65,13 +65,21 @@ force: false
 
 ## Samples Table
 
-Provide a TSV file listing the samples and their reference genomes:
+## Samples Table
 
-```tsv
-Sample	Reference_name	Reference_file
-sample1	ref1	references/ref1.fna
-sample2	ref2	references/ref2.fna
-```
+Provide a TSV file listing each sample, its raw read files, and its reference genome FASTA and optional GenBank file.
+
+    Sample	R1	R2	Reference_name	Reference_fasta	Reference_gbk
+    sample1	fastq/sample1_R1.fastq.gz	fastq/sample1_R2.fastq.gz	ref1	references/ref1.fna	references/ref1.gbk
+    sample2	fastq/sample2_R1.fastq.gz	fastq/sample2_R2.fastq.gz	ref2	references/ref2.fna	references/ref2.gbk
+
+### Notes
+
+Reference_gbk may be empty or point to a non-existent file.
+
+If missing and the CLI flag --make-annotation is given → annotation will be created.
+
+If missing and --make-annotation is NOT used → Snippy will use Reference_fasta directly (no annotation).
 
 ## Usage
 
