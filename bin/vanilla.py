@@ -213,16 +213,17 @@ def read_samples(file_path,config):
 			raise ValueError(f"Missing columns: '; '.join({missing})")
 		# Create Sample instances for each row
 		for _, row in df.iterrows():
-			sample = Sample(
-				name=row['Sample'],
-				r1=row.get('R1', ""),
-				r2=row.get('R2', ""),
-				fa=row.get('contigs', ""),
-				reference_name=row['Reference_name'],
-				reference_fasta=row.get('Reference_fasta', ""),
-				reference_gbk=row.get('Reference_gbk', ""),
-				config=config
-			)
+			if not row['Sample'].startswith("#"):
+				sample = Sample(
+					name=row['Sample'],
+					r1=row.get('R1', ""),
+					r2=row.get('R2', ""),
+					fa=row.get('contigs', ""),
+					reference_name=row['Reference_name'],
+					reference_fasta=row.get('Reference_fasta', ""),
+					reference_gbk=row.get('Reference_gbk', ""),
+					config=config
+				)
 
 			samples.append(sample)
 	except Exception as e:
@@ -329,7 +330,7 @@ def create_genbank(nt_file, faa_file, diamond_output, gbk_file, reference):
 	
 	with open(gbk_file,'w') as g:
 		for genbank_rcd in genbank_records:
-				g.write(str(genbank_rcd))
+				g.write(f"{genbank_rcd}\n")
 	msg(f"Ready with {gbk_file}")
 
 

@@ -102,3 +102,10 @@ The pipeline will:
 - `references/` – Reference ORF predictions, BED files, and GenBank files.
 - `snippy_results/` – Individual Snippy outputs per sample.
 - `data/trimmed/` – Trimmed FASTQ files.
+
+
+# What if I have long reads?
+
+Run vanillong:
+
+python3 vanillong.py
