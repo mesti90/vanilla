@@ -10,7 +10,7 @@ import threading
 import pandas as pd
 from Bio import SeqIO
 import gzip
-import pdb
+#import pdb
 
 lock = threading.Lock()
 
@@ -31,7 +31,20 @@ class Containers:
 	def all_images(self):
 		return [v for k, v in vars(self).items() if k.endswith("_IMG")]
 
+class Tool:
+	def __init__(self, name: str, container_attr: str, run_function):
+		"""
+		name: Human-readable name
+		container_attr: Attribute name in Containers (e.g. "UNICYCLER_IMG")
+		run_function: Function to execute (e.g. run_unicycler)
+		"""
+		self.name = name
+		self.container_attr = container_attr
+		self.run_function = run_function
 
+	def run(self, sample, args, containers, *extra):
+		container = getattr(containers, self.container_attr)
+		self.run_function(sample, *extra, args, container)
 
 ############################################
 # ARGUMENTS
@@ -43,12 +56,12 @@ def parse_args():
 		formatter_class=argparse.ArgumentDefaultsHelpFormatter
 	)
 	parser.add_argument("--dry-run", action="store_true", help="Print commands without executing them.")
-	parser.add_argument("-s", "--sample_table", default="sample_table_for_variant_analysis.tsv",
+	parser.add_argument("-s", "--sample_table", default="samples_for_vanillong.tsv",
 						help="TSV file with sample info: Sample, Reference_gbk, Raw_reads.")
 	parser.add_argument("-n", "--threads", type=int, default=20, help="Number of threads per assembly tool.")
 	parser.add_argument("-wd", "--workdir", default="vanillong_work", help="Working directory for outputs.")
 	parser.add_argument("--subthreads", type=int, default=3, help="Maximum number of samples to process concurrently.")
-	parser.add_argument("--binds", default="/node8_R10,/node10_R10,/scratch", help="Currently unused argument")
+	parser.add_argument("--binds", default="/node8_R10,/node10_R10,/scratch", help="These folders will be binded for singularity")
 	parser.add_argument("--stats", default="variant_statistics.tsv",help="The variant statistics will be printed to this file")
 	parser.add_argument("--all_variants", default="all_variants.tsv", help="The variants will be printed here")
 	
@@ -183,11 +196,11 @@ def singularity_cmd(img: Path, binds: str, *args):
 # TOOL FUNCTIONS
 ############################################
 
-def non_empty(fname, args):
+def non_empty(fname):
 	return fname.exists() and fname.stat().st_size > 0
 
-def run_filtlong(sample: Sample, args, container: Path) -> Path:
-	if non_empty(sample.filtlong_fastq, args):
+def run_filtlong(sample: Sample, args, container: Path):
+	if non_empty(sample.filtlong_fastq):
 		print_skip(f"filtlong for {sample.name}, output exists: {sample.filtlong_fastq}")
 		return
 		
@@ -201,15 +214,12 @@ def run_filtlong(sample: Sample, args, container: Path) -> Path:
 		str(sample.raw_reads)
 	]
 	cmd = singularity_cmd(container, args.binds, *run_args)
-	try:
-		run_cmd_redirect(sample.filtlong_fastq, cmd, args.dry_run)
-	except Exception as e:
-		print_error(f"running filtlong for {sample.name}: {e}")
-		log_error(f"Error running filtlong for {sample.name}: {e}\nCommand: {' '.join(cmd)}\n\n", args.errfile)
+	run_cmd_redirect(sample.filtlong_fastq, cmd, args.dry_run)
 
 
-def run_unicycler(sample: Sample, args, container: Path) -> Path:
-	if non_empty(sample.unicycler_assembly, args):
+
+def run_unicycler(sample: Sample, args, container: Path):
+	if non_empty(sample.unicycler_assembly):
 		print_skip( f"unicycler for {sample.name}, output exists: {sample.unicycler_assembly}")
 		return
 		
@@ -224,29 +234,21 @@ def run_unicycler(sample: Sample, args, container: Path) -> Path:
 		"--verbosity", "0",
 	]
 	cmd = singularity_cmd(container, args.binds, *run_args)
+	run_cmd(cmd, args.dry_run)
 	
-	try:
-		run_cmd(cmd, args.dry_run)
-	except Exception as e:
-		print_error(f"Error running unicycler for {sample.name}: {e}")
-		log_error(f"Error running unicycler for {sample.name}: {e}\nCommand: {' '.join(cmd)}\n\n", args.errfile)
 		
 
-def run_raven(sample: Sample, args, container: Path) -> Path:
-	if non_empty(sample.raven_assembly, args):
+def run_raven(sample: Sample, args, container: Path) :
+	if non_empty(sample.raven_assembly):
 		print_skip(f"raven for {sample.name}, output exists: {sample.raven_assembly}")
 		return
 		
 	run_args = ["raven", str(sample.filtlong_fastq), "-t", str(args.subthreads),"--disable-checkpoints"]
 	cmd = singularity_cmd(container, args.binds, *run_args)
-	try:
-		run_cmd_redirect(sample.raven_assembly, cmd, args.dry_run)
-	except Exception as e:
-		print_error(f"running raven for {sample.name}: {e}")
-		log_error(f"Error running raven for {sample.name}: {e}\nCommand: {' '.join(cmd)}\n\n", args.errfile)
-
-def run_flye(sample: Sample, args, container: Path) -> Path:
-	if non_empty(sample.flye_assembly, args):
+	run_cmd_redirect(sample.raven_assembly, cmd, args.dry_run)
+	
+def run_flye(sample: Sample, args, container: Path) :
+	if non_empty(sample.flye_assembly):
 		print_skip(f"flye for {sample.name}, output exists: {sample.flye_assembly}")
 		return
 		
@@ -261,7 +263,7 @@ def run_flye(sample: Sample, args, container: Path) -> Path:
 
 def run_snippy(sample, input_file: Path,  outdir: Path, args, container: Path, mode: str = "ctg"):
 	expected_file = outdir / "snps.csv"  # or pick any file that indicates Snippy finished
-	if non_empty(expected_file, args):
+	if non_empty(expected_file):
 		print_skip( f"snippy ({mode}) for {sample.name}, output exists: {expected_file}")
 		return
 		
@@ -272,9 +274,7 @@ def run_snippy(sample, input_file: Path,  outdir: Path, args, container: Path, m
 	if mode not in ("ctg", "se"):
 		print(f"{input_file}: Invalid mode: {mode}. Must be 'ctg' or 'se'.")
 		return
-	run_args = ["snippy", "--force", "--outdir", str(outdir), "--ref", str(sample.ref_gbk), "--cpus", str(args.subthreads)]
-	run_args.append(f"--{mode}")
-	run_args.append(str(input_file))
+	run_args = ["snippy", "--force", "--outdir", str(outdir), "--ref", str(sample.ref_gbk), "--cpus", str(args.subthreads), f"--{mode}", str(input_file)]
 	cmd = singularity_cmd(container, args.binds, *run_args)
 	try:
 		run_cmd(cmd, args.dry_run)
@@ -295,28 +295,28 @@ def process_sample(sample: Sample, args, containers: Containers):
 	sample.sample_dir.mkdir(parents=True, exist_ok=True)
 
 	# Step 1: Filtlong
-	run_filtlong(sample, args, containers.FILT_LONG_IMG)
-	if not args.dry_run and not non_empty(sample.filtlong_fastq, args):
+	filtlong_tool = Tool("filtlong", "FILT_LONG_IMG", run_filtlong)
+	filtlong_tool.run(sample, args, containers)
+	if not args.dry_run and not non_empty(sample.filtlong_fastq):
 		print(f"Error: filtlong for {sample.name} failed")
 		return
 
 	# Step 2: Assemblies
-	assembly_jobs = [
-		(run_unicycler, containers.UNICYCLER_IMG),
-		(run_raven, containers.RAVEN_IMG),
-		(run_flye, containers.FLYE_IMG)
+	assembly_tools = [
+		Tool("unicycler", "UNICYCLER_IMG", run_unicycler),
+		Tool("raven", "RAVEN_IMG", run_raven),
+		Tool("flye", "FLYE_IMG", run_flye),
 	]
-	random.shuffle(assembly_jobs)  # shuffle the order
+	random.shuffle(assembly_tools)  # shuffle the order
 
-	for func, container in assembly_jobs:
-		func(sample, args, container)
+	for tool in assembly_tools:
+		tool.run(sample, args, containers)
 	
 	#Step 3: Snippy
 	snippy_jobs = [
 		(sample.unicycler_assembly, sample.snippy_unicycler_dir, "ctg"),
 		(sample.raven_assembly, sample.snippy_raven_dir, "ctg"),
 		(sample.flye_assembly, sample.snippy_flye_dir, "ctg"),
-		#(sample.filtlong_fastq, sample.snippy_raw_dir, "se")
 	]
 
 	random.shuffle(snippy_jobs)
@@ -350,17 +350,17 @@ def read_sample_table(sample_table: Path, workdir: Path):
 # COUNT VARIANTS AND CREATE STATS
 ############################################
 
+# noinspection PyArgumentList
 def count_variants(snps_file: Path) -> pd.DataFrame:
 	"""Load snps.csv and return a DataFrame with unique variants (CHROM, POS, TYPE, REF, ALT)."""
 	if not snps_file.is_file():
 		return pd.DataFrame(columns=['CHROM','POS','TYPE','REF','ALT','EVIDENCE','FTYPE','STRAND','NT_POS','AA_POS','EFFECT','LOCUS_TAG','GENE','PRODUCT'])
-	df = pd.read_csv(snps_file)
+	df = pd.read_csv(snps_file, sep="\t")
 	return df.drop_duplicates(subset=['CHROM', 'POS', 'TYPE', 'REF', 'ALT'])
 
 def assembly_stats(assembly_file: Path):
 	"""Return (number of contigs, total length) for a FASTA assembly."""
 	if assembly_file.is_file() and assembly_file.stat().st_size > 0:
-		contigs = list(SeqIO.parse(str(assembly_file), "fasta"))
 		n = 0
 		total = 0
 		for rec in SeqIO.parse(str(assembly_file), "fasta"):
@@ -404,10 +404,11 @@ def intersect_variants(dfs) -> pd.DataFrame:
 def load_existing_stats(args):
 	if args.stats.exists():
 		print_info(f"Loading existing stats table: {args.stats}")
+		# noinspection PyArgumentList
 		return pd.read_csv(args.stats, sep="\t")
 	return None
 
-def snippy_stats(sample, args, existing_row = None) -> dict:
+def snippy_stats(sample, existing_row = None) -> dict:
 	"""Compute variant and assembly stats for a single sample and save merged variants."""
 	#pdb.set_trace()
 	print_info(f"Computing stats for sample: {sample.name}")
@@ -500,6 +501,8 @@ def snippy_stats(sample, args, existing_row = None) -> dict:
 	print_info(f"Finished stats for {sample.name}\n")
 	return stats
 
+
+# noinspection PyArgumentList
 def create_stats_table(samples: list, args):
 	"""Compute stats for all samples in parallel and write summary table."""
 	print_info(f"Computing stats for {len(samples)} samples...")
@@ -522,7 +525,7 @@ def create_stats_table(samples: list, args):
 					if existing_df is not None and sample.name in existing_df.index
 					else None
 				)
-			stats = snippy_stats(sample, args, existing_row)
+			stats = snippy_stats(sample, existing_row)
 			stats_list.append(stats)
 	else:
 		with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -533,7 +536,7 @@ def create_stats_table(samples: list, args):
 					if existing_df is not None and sample.name in existing_df.index
 					else None
 				)
-				future = executor.submit(snippy_stats, sample, args, existing_row)
+				future = executor.submit(snippy_stats, sample, existing_row)
 				future_to_sample[future] = sample
 
 			for future in as_completed(future_to_sample):

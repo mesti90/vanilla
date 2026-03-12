@@ -50,7 +50,8 @@ from Bio.GenBank import Record
 from Bio.Seq import Seq
 from spython.main import Client
 import shlex
-from dataclasses import dataclass, field, cached_property
+from dataclasses import dataclass, field
+from functools import cached_property
 import pdb
 pdb.set_trace = lambda *args, **kwargs: None
 from concurrent.futures import ProcessPoolExecutor

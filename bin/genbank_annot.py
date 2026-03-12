@@ -25,7 +25,6 @@ import shlex
 from dataclasses import dataclass
 from functools import cached_property
 import pdb
-pdb.set_trace = lambda *args, **kwargs: None
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -51,10 +50,8 @@ def parse_args():
 	parser.add_argument("-s", help="Samples", default="samples_for_annotation.tsv")
 	parser.add_argument("-n","--threads", help="Max threads", type=int, default=30)
 	parser.add_argument("--subthreads", help="Max threads under a main thread", type=int, default=2)
-	parser.add_argument("--db", help="Annotation database", default="/node8_R10/vasarhelyib/MinION_results/KBAGDK_20260129/Variant_analysis_20260211/Reference_Staphy/GCF_000013425.1.dmnd")
 	args = parser.parse_args()
 	args.s = Path(args.s)
-	args.db = Path(args.db)
 	return args
 
 
@@ -95,10 +92,34 @@ class Sample:
 	name: str
 	assembly: Path
 	gbk: Path
+	db: Path
 	
 	def __post_init__(self):
 		# Ensure the directory for GBK/orf outputs exists
 		self.gbk.parent.mkdir(parents=True, exist_ok=True)
+	
+	@cached_property
+	def assembly_plain(self) -> Path:
+		"""Return usable assembly FASTA. If gzipped, extract to Unzipped_assembly/."""
+		if str(self.assembly).endswith(".gz"):
+			
+			outdir = self.assembly.parent / "Unzipped_assembly"
+			outdir.mkdir(exist_ok=True)
+			
+			outfile = outdir / self.assembly.name.replace(".gz", "")
+			
+			if not outfile.exists():
+				msg(f"Decompressing {self.assembly} -> {outfile}")
+				with open(outfile, "wb") as out:
+					subprocess.run(
+						["gzip", "-dc", str(self.assembly)],
+						stdout=out,
+						check=True
+					)
+			
+			return outfile
+		
+		return self.assembly
 
 	@cached_property
 	def orf(self) -> Path:
@@ -113,8 +134,8 @@ class Sample:
 	@cached_property
 	def diamond(self):
 		return self.gbk.with_suffix(".diamond.tsv")
-
-
+	
+	
 	@cached_property
 	def bed(self) -> Path:
 		"""Return path to BED file derived from GenBank filename."""
@@ -128,23 +149,23 @@ class Sample:
 
 
 def read_sample_table(file_path):
-	"""Read the sample table and create Sample instances."""
+	"""Read sample table and create unique Sample objects."""
 	samples = []
 	try:
-		# Read the file into a DataFrame, skip comment lines
-		df = pd.read_csv(file_path, sep="\t", comment='#').fillna("")
-		required_columns = set(['Sample','Assembly','Genbank'])
-		present = set(df.columns)
-		if missing := required_columns - present:
-			raise ValueError(f"Missing columns: {'; '.join(missing)}")
-		# Create Sample instances for each row
-		for _, row in df.iterrows():
-			if not row['Sample'].startswith("#"):
-				sample = Sample(name=row['Sample'], assembly=Path(row['Assembly']), gbk=Path(row['Genbank']))
-				samples.append(sample)
+		df = pd.read_csv(file_path, sep="\t", comment="#").fillna("")
+
+		required = {"Reference_name","Reference_fasta", "Reference_gbk", "Annot_db"}
+		if missing := required - set(df.columns):
+			raise ValueError(f"Missing columns: {', '.join(missing)}")
+
+		# deduplicate annotation jobs
+		df = df.drop_duplicates(subset=["Reference_fasta", "Annot_db", "Reference_gbk"])
+
+		samples = [Sample(name=row["Reference_name"], assembly=Path(row["Reference_fasta"]), gbk=Path(row["Reference_gbk"]), db=Path(row["Annot_db"])) for _, row in df.iterrows()]
+
 	except Exception as e:
 		print(f"Error reading sample table: {e}")
-	
+
 	return samples
 
 
@@ -157,7 +178,7 @@ def predict_orf(sample, param, outfile):
 	if outfile.exists():
 		msg(f"{outfile} is ready, skipping ORF prediction")
 		return
-	singularity_exec("emboss", f"getorf -methionine -find {param} -minsize 90 -sequence {sample.assembly} -outseq {outfile}")
+	singularity_exec("emboss", f"getorf -methionine -find {param} -minsize 90 -sequence {sample.assembly_plain} -outseq {outfile}")
 	convert_orf_ids(sample,outfile)
 
 
@@ -178,7 +199,7 @@ def convert_orf_ids(sample,orf_file):
 def annotate_orfs_with_diamond(sample, args):
 	if sample.diamond.exists():
 		return
-	cmd = f"diamond blastp --max-target-seqs 1 --db {args.db} --threads {args.subthreads} --out {sample.diamond} --outfmt 6 qseqid sseqid qlen slen stitle qstart qend sstart send evalue bitscore length pident qcovhsp scovhsp full_qseq full_sseq --header --query {sample.orf}"
+	cmd = f"diamond blastp --max-target-seqs 1 --db {sample.db} --threads {args.subthreads} --out {sample.diamond} --outfmt 6 qseqid sseqid qlen slen stitle qstart qend sstart send evalue bitscore length pident qcovhsp scovhsp full_qseq full_sseq --header --query {sample.orf}"
 	singularity_exec("diamond", cmd)
 
 
@@ -188,12 +209,12 @@ def create_genbank(sample):
 	df = pd.read_csv(sample.diamond, sep="\t", comment='#', header=None)
 	products = {row[0]: row[4] for _,row in df.iterrows()}
 	msg(f"Reading {sample.orf_fna} and {sample.orf}")
-	fa_nt = SeqIO.index(sample.assembly,"fasta")
+	fa_nt = SeqIO.index(sample.assembly_plain,"fasta")
 	fa_aa = SeqIO.parse(sample.orf,"fasta")
 	contigs = list(fa_nt.keys())
 	orfs = {ctg:[] for ctg in contigs}
 	
-	pdb.set_trace()
+	#pdb.set_trace()
 	
 	for rcd in fa_aa:
 		ctg = rcd.id.split("|")[1]
@@ -258,6 +279,7 @@ def annot_sample(arglist):
 	"""Predict ORFs, create GenBank files, and annotate ORFs"""
 	sample, args = arglist
 	if sample.gbk.exists():
+		msg(f"[SKIP]{sample.gbk} is ready")
 		return
 	msg(f"Annotating {sample.name}")
 	
@@ -276,8 +298,6 @@ def main():
 	samples = read_sample_table(args.s)
 	
 	msg(f"Processing {len(samples)} unique samples.")
-	#for sample in samples:
-	#	annot_sample((sample, args,))
 	with ProcessPoolExecutor(max_workers=args.threads) as executor:
 		list(executor.map(annot_sample, [(sample, args,) for sample in samples]))
 	
