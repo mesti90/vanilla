@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import pdb
 import subprocess
 import shlex
 from datetime import datetime
@@ -10,13 +11,14 @@ import threading
 import pandas as pd
 from Bio import SeqIO
 import gzip
-#import pdb
 
 lock = threading.Lock()
 
 ############################################
 # CONTAINERS
 ############################################
+
+KEY_COLS = ['CHROM', 'POS', 'TYPE', 'REF', 'ALT']
 
 class Containers:
 	"""Holds paths to all Singularity container images."""
@@ -51,10 +53,7 @@ class Tool:
 ############################################
 
 def parse_args():
-	parser = argparse.ArgumentParser(
-		description="Pipeline for genome assembly and variant analysis using Filtlong, Unicycler, Raven, Flye, and Snippy.",
-		formatter_class=argparse.ArgumentDefaultsHelpFormatter
-	)
+	parser = argparse.ArgumentParser(description="Pipeline for genome assembly and variant analysis using Filtlong, Unicycler, Raven, Flye, and Snippy.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 	parser.add_argument("--dry-run", action="store_true", help="Print commands without executing them.")
 	parser.add_argument("-s", "--sample_table", default="samples_for_vanillong.tsv",
 						help="TSV file with sample info: Sample, Reference_gbk, Raw_reads.")
@@ -70,9 +69,10 @@ def parse_args():
 	parser.add_argument("--test", action="store_true")
 	parser.add_argument("--call_variants", action="store_true", help="Calling variants")
 	parser.add_argument("--create_stats", action="store_true", help="Compute stats from existing snps.csv files.")
+	parser.add_argument("--combine_variants", action="store_true", help="Combine per-sample variant tables into one file.")
 	args = parser.parse_args()
-	args.workdir = Path(args.workdir)
-	args.sample_table = Path(args.sample_table)
+	args.workdir = Path(args.workdir.strip())
+	args.sample_table = Path(args.sample_table.strip())
 	args.stats = args.workdir / args.stats
 	args.all_variants = args.workdir / args.all_variants
 	args.errfile = args.workdir / "vanillong.err"
@@ -86,10 +86,10 @@ def parse_args():
 class Sample:
 	"""Holds sample-specific data, output directory, and all intermediate results."""
 	def __init__(self, name: str, ref_gbk: Path, raw_reads: Path, workdir: Path):
-		self.name = name
+		self.name = name.strip()
 		self.ref_gbk = ref_gbk
 		self.raw_reads = raw_reads
-		self.sample_dir = workdir / name
+		self.sample_dir = workdir / self.name
 
 		# Assembly / intermediate files
 		self.filtlong_fastq: Path = self.sample_dir / f"{self.name}.filtlong.fastq"
@@ -286,7 +286,8 @@ def run_snippy(sample, input_file: Path,  outdir: Path, args, container: Path, m
 # SAMPLE PROCESSING
 ############################################
 
-def process_sample(sample: Sample, args, containers: Containers):
+def get_stats_and_variants_for_sample(sample: Sample, args, containers: Containers):
+	#pdb.set_trace()
 	if not sample.raw_reads.is_file():
 		raise FileNotFoundError(f"Missing reads: {sample.raw_reads}")
 	if not sample.ref_gbk.is_file():
@@ -343,7 +344,7 @@ def read_sample_table(sample_table: Path, workdir: Path):
 		for line in f:
 			row = line.strip().split("\t")
 			if not row[col_sample].startswith("#"):
-				samples.append(Sample(row[col_sample], Path(row[col_ref]), Path(row[col_reads]), workdir))
+				samples.append(Sample(row[col_sample], Path(row[col_ref].strip()), Path(row[col_reads].strip()), workdir))
 	return samples
 
 ############################################
@@ -354,9 +355,9 @@ def read_sample_table(sample_table: Path, workdir: Path):
 def count_variants(snps_file: Path) -> pd.DataFrame:
 	"""Load snps.csv and return a DataFrame with unique variants (CHROM, POS, TYPE, REF, ALT)."""
 	if not snps_file.is_file():
-		return pd.DataFrame(columns=['CHROM','POS','TYPE','REF','ALT','EVIDENCE','FTYPE','STRAND','NT_POS','AA_POS','EFFECT','LOCUS_TAG','GENE','PRODUCT'])
-	df = pd.read_csv(snps_file, sep="\t")
-	return df.drop_duplicates(subset=['CHROM', 'POS', 'TYPE', 'REF', 'ALT'])
+		return pd.DataFrame(columns=KEY_COLS + ['EVIDENCE','FTYPE','STRAND','NT_POS','AA_POS','EFFECT','LOCUS_TAG','GENE','PRODUCT'])
+	df = pd.read_csv(snps_file, sep=",")
+	return df.drop_duplicates(subset=KEY_COLS)
 
 def assembly_stats(assembly_file: Path):
 	"""Return (number of contigs, total length) for a FASTA assembly."""
@@ -392,13 +393,16 @@ def fastq_stats(fastq_file: Path):
 
 	return n_reads, total_nt
 
+
 def intersect_variants(dfs) -> pd.DataFrame:
 	"""Return the intersection of multiple variant DataFrames on CHROM, POS, TYPE, REF, ALT."""
 	if not dfs:
-		return pd.DataFrame(columns=['CHROM', 'POS', 'TYPE', 'REF', 'ALT', 'EVIDENCE', 'FTYPE', 'STRAND', 'NT_POS', 'AA_POS', 'EFFECT', 'LOCUS_TAG', 'GENE', 'PRODUCT'])
-	df = pd.concat(dfs, ignore_index=True)
-	df = df.drop_duplicates(subset=['CHROM','POS','TYPE','REF','ALT'])
-	return df
+		return pd.DataFrame(columns=KEY_COLS)
+	# Start with first DF keys
+	base = dfs[0][KEY_COLS].drop_duplicates()
+	for df in dfs[1:]:
+		base = base.merge(df[KEY_COLS].drop_duplicates(), on=KEY_COLS, how='inner')
+	return base.drop_duplicates()
 
 
 def load_existing_stats(args):
@@ -444,8 +448,10 @@ def snippy_stats(sample, existing_row = None) -> dict:
 	# ---- Variant handling ----
 	if sample.variants.exists() and existing_row is not None:
 		# Fully reuse existing values
-		shared_all_count = existing_row["shared_all_variants"]
-		shared_ctg_count = existing_row["shared_ctg_variants"]
+		flye_raven_count = existing_row["flye_raven_variants"]
+		raven_unicycler_count = existing_row["raven_unicycler_variants"]
+		flye_unicycler_count = existing_row["flye_unicycler_variants"]
+		all_three_count = existing_row["flye_raven_unicycler_variants"]
 
 		snippy_counts = {
 			"unicycler": existing_row["snippy_unicycler_variants"],
@@ -457,20 +463,27 @@ def snippy_stats(sample, existing_row = None) -> dict:
 		# Load variants fresh
 		variants = {k: count_variants(f) for k, f in snippy_files.items()}
 		snippy_counts = {k: len(v) for k, v in variants.items()}
-
-		shared_all = intersect_variants(list(variants.values()))
-		shared_ctg = intersect_variants([
-			variants["unicycler"],
-			variants["raven"],
+		
+		# Pairwise intersections
+		flye_raven = intersect_variants([variants["flye"], variants["raven"]])
+		raven_unicycler = intersect_variants([variants["raven"], variants["unicycler"]])
+		flye_unicycler = intersect_variants([variants["flye"], variants["unicycler"]])
+		
+		# Triple intersection
+		all_three = intersect_variants([
 			variants["flye"],
+			variants["raven"],
+			variants["unicycler"],
 		])
-
-		shared_all_count = len(shared_all)
-		shared_ctg_count = len(shared_ctg)
-
+		
+		flye_raven_count = len(flye_raven)
+		raven_unicycler_count = len(raven_unicycler)
+		flye_unicycler_count = len(flye_unicycler)
+		all_three_count = len(all_three)
+		
 		# Write merged variants ONLY if missing
 		if not sample.variants.exists():
-			merged = shared_ctg.drop_duplicates()
+			merged = all_three.drop_duplicates()
 			merged.to_csv(sample.variants, sep="\t", index=False)
 	
 	# Build stats dict
@@ -495,8 +508,11 @@ def snippy_stats(sample, existing_row = None) -> dict:
 		"snippy_flye_variants": snippy_counts["flye"],
 		#"snippy_raw_variants": snippy_counts["raw"],
 
-		"shared_all_variants": shared_all_count,
-		"shared_ctg_variants": shared_ctg_count,
+		
+		"flye_raven_variants": flye_raven_count,
+		"raven_unicycler_variants": raven_unicycler_count,
+		"flye_unicycler_variants": flye_unicycler_count,
+		"flye_raven_unicycler_variants": all_three_count,
 	}
 	print_info(f"Finished stats for {sample.name}\n")
 	return stats
@@ -520,22 +536,14 @@ def create_stats_table(samples: list, args):
 	
 	if args.test:
 		for sample in samples:
-			existing_row = (
-					existing_df.loc[sample.name]
-					if existing_df is not None and sample.name in existing_df.index
-					else None
-				)
+			existing_row = (existing_df.loc[sample.name] if existing_df is not None and sample.name in existing_df.index else None)
 			stats = snippy_stats(sample, existing_row)
 			stats_list.append(stats)
 	else:
 		with ThreadPoolExecutor(max_workers=max_workers) as executor:
 			future_to_sample = {}
 			for sample in samples:
-				existing_row = (
-					existing_df.loc[sample.name]
-					if existing_df is not None and sample.name in existing_df.index
-					else None
-				)
+				existing_row = (existing_df.loc[sample.name] if existing_df is not None and sample.name in existing_df.index else None)
 				future = executor.submit(snippy_stats, sample, existing_row)
 				future_to_sample[future] = sample
 
@@ -546,26 +554,26 @@ def create_stats_table(samples: list, args):
 					stats_list.append(stats)
 				except Exception as e:
 					print_error(f"Stats failed for sample {sample.name}: {e}")
-					log_error(
-						f"Stats failed for sample {sample.name}: {e}",
-						args.errfile
-					)
+					log_error(f"Stats failed for sample {sample.name}: {e}", args.errfile)
 				finally:
 					completed += 1
 					print_info(f"Stats progress: {completed}/{total}")
-
 	df = pd.DataFrame(stats_list)
 	if not df.empty:
 		df.sort_values("sample", inplace=True)
 	else:
-		print_error("No stats were generated successfully.")
+		print_error("No stats were generated successfully")
 	
 	df.to_csv(args.stats, sep="\t", index=False)
-
 	print_info(f"Stats table written to {args.stats}")
 	
 	
-	#Combine all variant tables
+	
+
+def combine_all_variants(samples: list, args):
+	"""Combine per-sample triple-intersection variant tables into a single file."""
+	print_info("Combining all variant tables (intersection only)...")
+
 	all_variants = []
 
 	for sample in samples:
@@ -576,16 +584,16 @@ def create_stats_table(samples: list, args):
 				df.insert(0, "sample", sample.name)
 				all_variants.append(df)
 
-	if not args.all_variants.exists():
-		if all_variants:
-			combined = pd.concat(all_variants, ignore_index=True)
-			combined.to_csv(args.all_variants, sep="\t", index=False)
-			print_info(f"Combined variants table written to {args.all_variants}")
-		else:
-			print_info("No variants found in any sample to combine.")
-	else:
+	if args.all_variants.exists():
 		print_info(f"Combined variants table already exists: {args.all_variants}")
+		return
 
+	if all_variants:
+		combined = pd.concat(all_variants, ignore_index=True)
+		combined.to_csv(args.all_variants, sep="\t", index=False)
+		print_info(f"Combined variants table written to {args.all_variants}")
+	else:
+		print_info("No variants found in any sample to combine.")
 	
 
 ############################################
@@ -611,13 +619,13 @@ def main():
 		if args.test:
 			for sample in samples:
 				try:
-					process_sample(sample, args, containers)
+					get_stats_and_variants_for_sample(sample, args, containers)
 				except Exception as e:
 					print_error(f"Error processing sample {sample.name}: {e}")
 					log_error(f"Error processing sample {sample.name}: {e}", args.errfile)
 		else:
 			with ThreadPoolExecutor(max_workers=min(args.threads, len(samples))) as executor:
-				futures = [executor.submit(process_sample, s, args, containers) for s in samples]
+				futures = [executor.submit(get_stats_and_variants_for_sample, s, args, containers) for s in samples]
 				for future in as_completed(futures):
 					try:
 						future.result()
@@ -626,6 +634,9 @@ def main():
 	
 	if args.create_stats:
 		create_stats_table(samples, args)
+	
+	if args.create_stats or args.combine_variants:
+		combine_all_variants(samples, args)
 
 if __name__ == "__main__":
 	main()
