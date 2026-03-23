@@ -1,4 +1,4 @@
-Sample	R1	R2	contigs	Reference_name	Reference_fasta	Reference_gbk
+Sample	R1	R2	contigs	Reference_name	Reference_fasta	Reference_gbk   Annot_db
 K382-2	raw_reads/K382-2_S132_L001_R1_001.fastq.gz	raw_reads/K382-2_S132_L001_R2_001.fastq.gz		K382	contigs/K382S1.fna	genbanks/K382.gbk
 K382-3	raw_reads/K382-3_S130_L001_R1_001.fastq.gz	raw_reads/K382-3_S130_L001_R2_001.fastq.gz		K382	contigs/K382S1.fna	genbanks/K382.gbk
 K484-1	raw_reads/K484-1_S131_L001_R1_001.fastq.gz	raw_reads/K484-1_S131_L001_R2_001.fastq.gz		K484	contigs/NNGYK_K294S1.fna	genbanks/K484.gbk

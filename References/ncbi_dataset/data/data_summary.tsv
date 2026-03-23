@@ -1,0 +1,3 @@
+Organism Scientific Name	Organism Common Name	Organism Qualifier	Taxonomy id	Assembly Name	Assembly Accession	Source	Annotation	Level	Contig N50	Size	Submission Date	Gene Count	BioProject	BioSample
+Acinetobacter baumannii		strain: ATCC 19606	470	ASM903584v1	GCA_009035845.1	GenBank	Annotation submitted by University of Technology Sydney	Complete Genome	3981941	3999136	2019-10-16	3824	PRJNA557095	SAMN12389466
+Acinetobacter baumannii		strain: ATCC 19606	470	ASM903584v1	GCF_009035845.1	RefSeq	GCF_009035845.1-RS_2025_03_30	Complete Genome	3981941	3999136	2019-10-16	3833	PRJNA557095	SAMN12389466
