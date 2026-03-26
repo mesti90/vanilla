@@ -10,6 +10,7 @@ def load_table(path):
 	df = pd.read_csv(path, sep="\t")
 	print(f"Loaded {len(df)} rows")
 	return df
+	
 
 
 def build_variant_id(df):
@@ -96,19 +97,12 @@ def parse_args():
 
 
 def main():
-
 	args = parse_args()
-
 	df = load_table(args.table)
-
 	df = build_variant_id(df)
-
 	ref_df, ref_variants = get_reference_variants(df, args.reference)
-
 	diff_df = find_differences(df, ref_df, ref_variants, args.reference, args.samples)
-
 	write_output(diff_df, args.output)
-
 	print("Done.")
 
 

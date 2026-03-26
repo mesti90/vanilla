@@ -1,0 +1,3 @@
+[submodule "nanopore"]
+	path = nanopore
+	url = git@github.com:mesti90/nanopore.git

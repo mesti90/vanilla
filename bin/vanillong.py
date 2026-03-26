@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import csv
 import pdb
 import subprocess
 import shlex
@@ -7,8 +8,11 @@ from pathlib import Path
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
+import sys
 import threading
 import pandas as pd
+repo_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(repo_root))
 from Bio import SeqIO
 import gzip
 
@@ -28,6 +32,11 @@ class Containers:
 		self.RAVEN_IMG = base_dir / "staphb-raven.1.8.3.sif"
 		self.FLYE_IMG = base_dir / "staphb-flye.2.9.6.sif"
 		self.SNIPPY_IMG = base_dir / "staphb-snippy-4.6.0-SC2.img"
+		self.RACON_IMG = base_dir / "staphb-racon.1.5.0-minimap2.sif"
+		self.MEDAKA_IMG = base_dir / "staphb-medaka.2.2.0.sif"
+		self.MINIMAP_IMG = base_dir / "staphb-minimap2.2.30.sif"
+		self.SAMTOOLS_IMG = base_dir / "staphb-samtools.1.23.sif"
+		self.BCFTOOLS_IMG = base_dir / "staphb-bcftools.1.23.sif"	
 
 	@property
 	def all_images(self):
@@ -62,6 +71,7 @@ def parse_args():
 	parser.add_argument("--subthreads", type=int, default=3, help="Maximum number of samples to process concurrently.")
 	parser.add_argument("--binds", default="/node8_R10,/node10_R10,/scratch", help="These folders will be binded for singularity")
 	parser.add_argument("--stats", default="variant_statistics.tsv",help="The variant statistics will be printed to this file")
+	parser.add_argument("--consensus_stats", default="consensus_statistics.tsv", help="The consensus statistics will be printed to this file")
 	parser.add_argument("--all_variants", default="all_variants.tsv", help="The variants will be printed here")
 	
 	parser.add_argument("--filtlong_max_bases", default="500mb", help="This arg will be passed to filtlong")
@@ -74,6 +84,7 @@ def parse_args():
 	args.workdir = Path(args.workdir.strip())
 	args.sample_table = Path(args.sample_table.strip())
 	args.stats = args.workdir / args.stats
+	args.consensus_stats = args.workdir / args.consensus_stats
 	args.all_variants = args.workdir / args.all_variants
 	args.errfile = args.workdir / "vanillong.err"
 	return args
@@ -100,11 +111,28 @@ class Sample:
 		self.flye_assembly : Path =  self.flye_dir / "assembly.fasta"
 
 		# Snippy output dirs
-		self.snippy_unicycler_dir : Path = self.sample_dir / "snippy_unicycler"
-		self.snippy_raven_dir : Path = self.sample_dir / "snippy_raven"
-		self.snippy_flye_dir : Path = self.sample_dir / "snippy_flye"
-		self.snippy_raw_dir: Path = self.sample_dir / "snippy_raw"
-		
+		self.snippy_unicycler_dir : Path = self.sample_dir / "snippy_unicycler_racon"
+		self.snippy_raven_dir : Path = self.sample_dir / "snippy_raven_racon"
+		self.snippy_flye_dir : Path = self.sample_dir / "snippy_flye_racon"
+
+		# Minimap
+		self.unicycler_sam = self.sample_dir / f"{self.name}_unicycler.sam"
+		self.raven_sam = self.sample_dir / f"{self.name}_raven.sam"
+		self.flye_sam = self.sample_dir / f"{self.name}_flye.sam"
+
+		# Polishing
+		self.racon_unicycler = self.sample_dir / f"{self.name}_racon_unicycler.fna"
+		self.racon_raven = self.sample_dir / f"{self.name}_racon_raven.fna"
+		self.racon_flye = self.sample_dir / f"{self.name}_racon_flye.fna"
+
+		self.medaka_unicycler_path = self.sample_dir / f"{self.name}_medaka_unicycler/"
+		self.medaka_raven_path = self.sample_dir / f"{self.name}_medaka_raven/"
+		self.medaka_flye_path = self.sample_dir / f"{self.name}_medaka_flye/"
+
+		self.medaka_unicycler = self.medaka_unicycler_path / "consensus.fasta"
+		self.medaka_raven = self.medaka_raven_path / "consensus.fasta"
+		self.medaka_flye = self.medaka_flye_path / "consensus.fasta"
+
 		#Variants
 		self.variants = workdir / f"{self.name}.variants.tsv"
 
@@ -179,7 +207,7 @@ def run_cmd_redirect(outfile: Path, cmd, dry_run: bool, errfile: Path = None):
 	print(print_prefix("DRY_RUN" if dry_run else "RUN") + " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(outfile))}")
 	if dry_run:
 		return
-
+	outfile.parent.mkdir(parents=True, exist_ok=True)
 	try:
 		with outfile.open("w") as f:
 			subprocess.run(cmd, check=True, stdout=f, stderr=subprocess.PIPE, text=True)
@@ -229,7 +257,7 @@ def run_unicycler(sample: Sample, args, container: Path):
 		"--long", str(sample.filtlong_fastq),
 		"--out", str(sample.unicycler_dir),
 		"--keep", "0",
-		"--threads", str(args.threads),
+		"--threads", str(args.subthreads),
 		"--mode", "conservative",
 		"--verbosity", "0",
 	]
@@ -282,9 +310,96 @@ def run_snippy(sample, input_file: Path,  outdir: Path, args, container: Path, m
 		print_error(f"running snippy ({mode}) for sample {sample.name}, {sample.ref_gbk} on {input_file.name}: {e}")
 		log_error(f"Error running snippy ({mode}) for sample {sample.name}, {sample.ref_gbk} on {input_file.name}: {e}\nCommand: {' '.join(cmd)}\n\n", args.errfile)
 
+def run_racon(reads, mapping, consensus, polished, containers, args) :
+	'''Polish the consensus using Racon.'''
+	if non_empty(polished):
+		print_skip(f"racon for {consensus}, output exists: {polished}")
+		return	
+	run_args = ["racon", str(reads), str(mapping), str(consensus), "-t", str(args.subthreads)]
+	cmd = singularity_cmd(containers.RACON_IMG, args.binds, *run_args)
+	run_cmd_redirect(polished, cmd, args.dry_run)
+
+def run_medaka(reads, assembly, outfolder, containers, args):
+	'''Polish the consensus using Medaka.'''
+	outfile = Path(outfolder) / "consensus.fasta"
+	if non_empty(outfile):
+		print_skip(f"medaka for {assembly}, output exists: {outfile}")
+		return
+	run_args = ["medaka_consensus", "-i", str(reads), "-d", str(assembly), "-o", str(outfolder), "-t", str(args.subthreads), "-f"]
+	cmd = singularity_cmd(containers.MEDAKA_IMG, args.binds, *run_args)
+	run_cmd(cmd, args.dry_run)
+
+def minimap(fastq, reference,outsam, containers, args):
+	'''Align reads to a reference using minimap2.'''
+	if non_empty(outsam):
+		print_skip(f"minimap for {reference}, output exists: {outsam}")
+		return
+	run_args = ["minimap2", "-x", "map-ont", "-t", str(args.subthreads), str(reference), str(fastq), "-a", "-o", str(outsam)]
+	cmd = singularity_cmd(containers.MINIMAP_IMG, args.binds, *run_args)
+	run_cmd(cmd, args.dry_run)
+
+
+
 ############################################
 # SAMPLE PROCESSING
-############################################
+###############################
+
+def count_errors(vcf_file):
+	substitutions = 0
+	indels = 0
+	frameshifts = 0
+
+	with open(vcf_file) as f:
+		for line in f:
+			if line.startswith("#"):
+				continue
+
+			fields = line.strip().split("\t")
+			ref = fields[3]
+			alt = fields[4].split(",")[0]
+
+			if len(ref) == 1 and len(alt) == 1:
+				substitutions += 1
+			else:
+				indels += 1
+				diff = abs(len(ref) - len(alt))
+				if diff % 3 != 0:
+					frameshifts += 1
+
+	return substitutions, indels, frameshifts
+
+
+
+def test_consensus(sample_name, assembler, reads, consensus, outdir, threads, containers, args):
+	minimap = outdir / f"{sample_name}.{assembler}.sam"
+	bam = outdir / f"{sample_name}.{assembler}.bam"
+	bai = outdir / f"{sample_name}.{assembler}.bam.bai"
+	mpileup = outdir / f"{sample_name}.{assembler}.mpileup"
+	vcf = outdir / f"{sample_name}.{assembler}.vcf"
+	#
+	if not minimap.exists():
+		command = ["minimap2", "-ax", "map-ont", "-t", str(threads), "-o", str(minimap), str(consensus), str(reads)]
+		cmd = singularity_cmd(containers.MINIMAP_IMG, args.binds, *command)
+		run_cmd(cmd, args.dry_run)
+	if not bam.exists():
+		command = ["samtools", "sort", "-o", str(bam), str(minimap)]
+		cmd = singularity_cmd(containers.SAMTOOLS_IMG, args.binds, *command)
+		run_cmd(cmd, args.dry_run)
+	if not bai.exists():
+		command = ["samtools", "index", str(bam)]
+		cmd = singularity_cmd(containers.SAMTOOLS_IMG, args.binds, *command)
+		run_cmd(cmd, args.dry_run)
+	if not mpileup.exists():
+		command = ["bcftools", "mpileup", "-f", str(consensus), str(bam), "-o", str(mpileup)]
+		cmd = singularity_cmd(containers.BCFTOOLS_IMG, args.binds, *command)
+		run_cmd(cmd, args.dry_run)
+	if not vcf.exists():
+		command = ["bcftools", "call", "-mv", "-Ov", "-o", str(vcf), str(mpileup)]
+		cmd = singularity_cmd(containers.BCFTOOLS_IMG, args.binds, *command)
+		run_cmd(cmd, args.dry_run)
+	sub, ind, fs = count_errors(vcf)
+	print(f"{sample_name} / {assembler}: {sub} substitutions, {ind} indels, {fs} frameshifts", flush=True)
+	return sub, ind, fs
 
 def get_stats_and_variants_for_sample(sample: Sample, args, containers: Containers):
 	#pdb.set_trace()
@@ -309,24 +424,53 @@ def get_stats_and_variants_for_sample(sample: Sample, args, containers: Containe
 		Tool("flye", "FLYE_IMG", run_flye),
 	]
 	random.shuffle(assembly_tools)  # shuffle the order
-
+	
 	for tool in assembly_tools:
 		tool.run(sample, args, containers)
+
+
+	# Step 3: Polishing
+	for assembly in ['unicycler','raven','flye']:
+		minimap(sample.filtlong_fastq, getattr(sample, f"{assembly}_assembly"), getattr(sample, f"{assembly}_sam"), containers, args)
+		run_racon(sample.filtlong_fastq, getattr(sample, f"{assembly}_sam"), getattr(sample, f"{assembly}_assembly"), getattr(sample, f"racon_{assembly}"), containers, args)
+		run_medaka(sample.filtlong_fastq, getattr(sample, f"racon_{assembly}"), getattr(sample, f"medaka_{assembly}_path"), containers, args)
+
+	# Step 4: check consensus stats
+	consensus_stats = [sample.name]
+	for assembler in ["unicycler", "raven", "flye"]:
+		assembly = getattr(sample, f"medaka_{assembler}")
+		if non_empty(assembly):
+			res = list(test_consensus(sample.name, assembler, sample.filtlong_fastq, assembly, sample.sample_dir, args.subthreads, containers, args))
+		else:
+			res = ["-", "-", "-"]
+		consensus_stats.extend(res)
 	
-	#Step 3: Snippy
+	with lock:
+		with open(args.consensus_stats, "a") as f:
+			wtr = csv.writer(f, delimiter="\t")
+			wtr.writerow(consensus_stats)
+			print(f"Wrote consensus stats for sample: {sample.name}")
+
+	#Step 5: Snippy
 	snippy_jobs = [
-		(sample.unicycler_assembly, sample.snippy_unicycler_dir, "ctg"),
-		(sample.raven_assembly, sample.snippy_raven_dir, "ctg"),
-		(sample.flye_assembly, sample.snippy_flye_dir, "ctg"),
+		(sample.medaka_unicycler, sample.snippy_unicycler_dir),
+		(sample.medaka_raven, sample.snippy_raven_dir),
+		(sample.medaka_flye, sample.snippy_flye_dir)
 	]
 
 	random.shuffle(snippy_jobs)
 
-	for input_file, outdir, mode in snippy_jobs:
-		run_snippy(sample, input_file, outdir, args, containers.SNIPPY_IMG, mode)
 
+
+	for input_file, outdir in snippy_jobs:
+		run_snippy(sample, input_file, outdir, args, containers.SNIPPY_IMG)
 
 	print(f"=== Finished sample: {sample.name} ===")
+
+
+	
+	
+
 
 
 
@@ -613,8 +757,16 @@ def main():
 	if not args.dry_run:
 		args.workdir.mkdir(exist_ok=True)
 	samples = read_sample_table(args.sample_table, args.workdir)
+	samples = samples
 	random.shuffle(samples)
 	
+	with open(args.consensus_stats, "w") as f:
+		wtr = csv.writer(f, delimiter="\t")
+		header = ["sample"]
+		for assembler in ["unicycler", "raven", "flye"]:
+			header.extend([f"{assembler}_{col}" for col in ["snps", "indels", "frameshifts"]])
+		wtr.writerow(header)
+
 	if args.call_variants:
 		if args.test:
 			for sample in samples:
@@ -631,7 +783,8 @@ def main():
 						future.result()
 					except Exception as e:
 						print(f"Error processing sample: {e}")
-	
+						exit()
+		
 	if args.create_stats:
 		create_stats_table(samples, args)
 	
