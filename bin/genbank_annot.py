@@ -178,22 +178,26 @@ def predict_orf(sample, param, outfile):
 	if outfile.exists():
 		msg(f"{outfile} is ready, skipping ORF prediction")
 		return
-	singularity_exec("emboss", f"getorf -methionine -find {param} -minsize 90 -sequence {sample.assembly_plain} -outseq {outfile}")
-	convert_orf_ids(sample,outfile)
+	singularity_exec("emboss", f"getorf -methionine -find {param} -minsize 90 -sequence {sample.assembly_plain} -outseq {outfile}.raw")
+	convert_orf_ids(sample,f"{outfile}.raw", outfile)
 
 
-def convert_orf_ids(sample,orf_file):
+def convert_orf_ids(sample,infile, outfile):
 	"""Standardize ORF IDs in a FASTA file."""
 	updated_records = []
-	for rcd in SeqIO.parse(orf_file,"fasta"):
+	for rcd in SeqIO.parse(infile,"fasta"):
 		block = rcd.description.strip().split()
 		ctg, orfnum = block[0].rsplit("_",1)
-		start,end = sorted([int(block[1].strip("[")),int(block[3].strip("]"))])
-		ori = "-" if rcd.description.strip().endswith("(REVERSE SENSE)") else "+"
+		start,end = int(block[1].strip("[")),int(block[3].strip("]"))
+		if start < end:
+			ori = "+"
+		else:
+			ori = "-"
+		start, end = sorted([start, end])
 		orfid = f"{sample.name}|{ctg}|ORF_{orfnum}|{ori}|{start}-{end}"
 		updated_records.append(">{}\n{}\n".format(orfid,rcd.seq))
 		
-	with open(orf_file, "w") as g:
+	with open(outfile, "w") as g:
 		g.writelines(updated_records)
 
 def annotate_orfs_with_diamond(sample, args):
